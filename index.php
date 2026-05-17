@@ -1,4 +1,8 @@
 <?php
+session_start();
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
 include("connection.php");
 ?>
 
@@ -49,7 +53,8 @@ include("connection.php");
             </div>
         </div>
         <div class="right">
-            <form action="process.php" method="post" id="registrationForm">
+                <form action="process.php" method="post" id="registrationForm">
+                    <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
                 <div class="row">
                     <div>
                         <label for="fname">First Name</label>

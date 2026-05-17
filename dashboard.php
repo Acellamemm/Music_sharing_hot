@@ -1,5 +1,8 @@
 <?php
 session_start();
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
 include("connection.php");
 
 if (!isset($_SESSION['user_id'])) {
@@ -12,7 +15,8 @@ $dj_alias = $_SESSION['dj_alias'] ?? 'DJ';
 $display_name = $dj_alias !== 'DJ' ? $dj_alias : ($_SESSION['fname'] ?? 'Artist');
 
 // My Mixes
-$my_mix_stmt = $conn->prepare("SELECT title, description, soundcloud_link, uploaded_at, genre, listens FROM mixes WHERE user_id = ? ORDER BY uploaded_at DESC");
+$my_mix_stmt = $conn->prepare("SELECT id, title, description, soundcloud_link, uploaded_at, genre, listens FROM mixes WHERE user_id = ? ORDER BY uploaded_at DESC");
+if (!$my_mix_stmt) die("Query failed: " . $conn->error);
 $my_mix_stmt->bind_param("i", $user_id);
 $my_mix_stmt->execute();
 $my_mixes = $my_mix_stmt->get_result();
@@ -20,30 +24,42 @@ $my_mixes = $my_mix_stmt->get_result();
 // Discover - newest mixes
 $discover_stmt = $conn->query("SELECT m.title, m.description, m.soundcloud_link, m.uploaded_at, u.dj_alias, m.genre, m.listens 
                               FROM mixes m JOIN users u ON m.user_id = u.id 
-                              ORDER BY m.uploaded_at DESC LIMIT 12");
+                              ORDER BY m.uploaded_at DESC LIMIT 12") or die("Query failed: " . $conn->error);
+$discover = $discover_stmt->fetch_all(MYSQLI_ASSOC);
 
 // Community Feed
 $feed_stmt = $conn->query("SELECT m.title, m.description, m.soundcloud_link, m.uploaded_at, u.dj_alias, m.genre, m.listens 
                           FROM mixes m JOIN users u ON m.user_id = u.id 
-                          ORDER BY m.uploaded_at DESC LIMIT 20");
+                          ORDER BY m.uploaded_at DESC LIMIT 20") or die("Query failed: " . $conn->error);
+$feed = $feed_stmt->fetch_all(MYSQLI_ASSOC);
 
 // Top DJs - ranked by number of mixes
 $top_djs_stmt = $conn->query("SELECT u.id, u.dj_alias, COUNT(m.id) as mix_count 
                              FROM users u 
                              LEFT JOIN mixes m ON u.id = m.user_id 
                              GROUP BY u.id 
-                             ORDER BY mix_count DESC LIMIT 10");
+                             ORDER BY mix_count DESC LIMIT 10") or die("Query failed: " . $conn->error);
+$top_djs = $top_djs_stmt->fetch_all(MYSQLI_ASSOC);
 
 // All distinct genres for the dropdown
-$genres_stmt = $conn->query("SELECT DISTINCT genre FROM mixes WHERE genre IS NOT NULL AND genre != '' ORDER BY genre");
+$genres_stmt = $conn->query("SELECT DISTINCT genre FROM mixes WHERE genre IS NOT NULL AND genre != '' ORDER BY genre") or die("Query failed: " . $conn->error);
+$genres = $genres_stmt->fetch_all(MYSQLI_ASSOC);
 
 // Genre filter
 $selected_genre = $_GET['genre'] ?? '';
-$genre_filter_sql = $selected_genre ? "WHERE m.genre = '" . $conn->real_escape_string($selected_genre) . "'" : '';
-$genre_mixes_stmt = $conn->query("SELECT m.title, m.description, m.soundcloud_link, m.uploaded_at, u.dj_alias, m.genre, m.listens 
-                                  FROM mixes m JOIN users u ON m.user_id = u.id 
-                                  $genre_filter_sql 
-                                  ORDER BY m.uploaded_at DESC");
+if ($selected_genre) {
+    $genre_mixes_stmt = $conn->prepare("SELECT m.title, m.description, m.soundcloud_link, m.uploaded_at, u.dj_alias, m.genre, m.listens 
+                                        FROM mixes m JOIN users u ON m.user_id = u.id 
+                                        WHERE m.genre = ? 
+                                        ORDER BY m.uploaded_at DESC") or die("Query failed: " . $conn->error);
+    $genre_mixes_stmt->bind_param("s", $selected_genre);
+    $genre_mixes_stmt->execute();
+    $genre_mixes = $genre_mixes_stmt->get_result();
+} else {
+    $genre_mixes = $conn->query("SELECT m.title, m.description, m.soundcloud_link, m.uploaded_at, u.dj_alias, m.genre, m.listens 
+                                 FROM mixes m JOIN users u ON m.user_id = u.id 
+                                 ORDER BY m.uploaded_at DESC") or die("Query failed: " . $conn->error);
+}
 ?>
 
 <!DOCTYPE html>
@@ -54,7 +70,6 @@ $genre_mixes_stmt = $conn->query("SELECT m.title, m.description, m.soundcloud_li
     <title>Dashboard - FusionMix</title>
     <link rel="stylesheet" href="style.css">
     <style>
-       <style>
     /* Background Control */
     .bg-wrapper {
         position: fixed;
@@ -449,7 +464,7 @@ $genre_mixes_stmt = $conn->query("SELECT m.title, m.description, m.soundcloud_li
     <h2 style="text-align:center;margin-bottom:30px;">Your Mixes</h2>
     <div class="mix-grid">
         <?php if ($my_mixes->num_rows > 0): ?>
-            <?php while ($mix = $my_mixes->fetch_assoc()): ?>
+            <?php while ($mix = $my_mixes->fetch_assoc()): $mix_id = (int)($mix['id'] ?? 0); ?>
                 <div class="mix-card">
                     <div class="mix-title"><?= htmlspecialchars($mix['title']) ?></div>
                     <div class="mix-meta">
@@ -486,20 +501,20 @@ $genre_mixes_stmt = $conn->query("SELECT m.title, m.description, m.soundcloud_li
                         <div style="display:flex;align-items:center;gap:20px;margin-bottom:25px;">
                             <?php
                             $like_check = $conn->prepare("SELECT 1 FROM likes WHERE user_id = ? AND mix_id = ?");
-                            $like_check->bind_param("ii", $user_id, $mix['id']);
+                            $like_check->bind_param("ii", $user_id, $mix_id);
                             $like_check->execute();
                             $liked = $like_check->get_result()->num_rows > 0;
 
                             $like_count_stmt = $conn->prepare("SELECT COUNT(*) as c FROM likes WHERE mix_id = ?");
-                            $like_count_stmt->bind_param("i", $mix['id']);
+                            $like_count_stmt->bind_param("i", $mix_id);
                             $like_count_stmt->execute();
                             $like_count = $like_count_stmt->get_result()->fetch_assoc()['c'];
                             ?>
 
-                            <button onclick="toggleLike(<?= $mix['id'] ?>)" style="background:none;border:none;cursor:pointer;font-size:1.6rem;">
-                                <span id="heart-<?= $mix['id'] ?>"><?= $liked ? '❤️' : '🤍' ?></span>
+                            <button onclick="toggleLike(<?= $mix_id ?>)" style="background:none;border:none;cursor:pointer;font-size:1.6rem;">
+                                <span id="heart-<?= $mix_id ?>"><?= $liked ? '❤️' : '🤍' ?></span>
                             </button>
-                            <span id="like-count-<?= $mix['id'] ?>" style="color:#ff416c;font-weight:bold;"><?= $like_count ?></span> Likes
+                            <span id="like-count-<?= $mix_id ?>" style="color:#ff416c;font-weight:bold;"><?= $like_count ?></span> Likes
 
                             <span class="listen-count" style="color:#aaa;margin-left:auto;">
                                 👀 <?= $mix['listens'] ?? 0 ?> Listens
@@ -516,9 +531,10 @@ $genre_mixes_stmt = $conn->query("SELECT m.title, m.description, m.soundcloud_li
                                                              JOIN users u ON c.user_id = u.id 
                                                              WHERE c.mix_id = ? 
                                                              ORDER BY c.created_at DESC");
-                            $comments_stmt->bind_param("i", $mix['id']);
+                            $comments_stmt->bind_param("i", $mix_id);
                             $comments_stmt->execute();
                             $comments_res = $comments_stmt->get_result();
+                            $comments_stmt->close();
                             ?>
 
                             <?php if ($comments_res->num_rows > 0): ?>
@@ -534,7 +550,8 @@ $genre_mixes_stmt = $conn->query("SELECT m.title, m.description, m.soundcloud_li
                             <?php endif; ?>
 
                             <form action="add_comment.php" method="post" style="margin-top:20px;">
-                                <input type="hidden" name="mix_id" value="<?= $mix['id'] ?>">
+                                <input type="hidden" name="mix_id" value="<?= $mix_id ?>">
+                                <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
                                 <textarea name="comment" rows="3" placeholder="Drop your thoughts..." required 
                                           style="width:100%;padding:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.15);border-radius:10px;color:white;"></textarea>
                                 <button type="submit" style="margin-top:10px;padding:8px 20px;background:linear-gradient(90deg,var(--accent1),var(--accent2));border:none;border-radius:30px;color:white;">
@@ -562,6 +579,7 @@ $genre_mixes_stmt = $conn->query("SELECT m.title, m.description, m.soundcloud_li
             <span class="close" onclick="closeUploadModal()">&times;</span>
             <h2>Upload Mix</h2>
             <form action="upload_mix.php" method="post">
+                <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token'] ?>">
                 <label for="title">Title</label>
                 <input id="title" name="title" type="text" required placeholder="Mix title">
 
@@ -606,27 +624,7 @@ $genre_mixes_stmt = $conn->query("SELECT m.title, m.description, m.soundcloud_li
         if(!m) return;
         if(e.target === m) closeUploadModal();
     });
-    function toggleLike(mixId) {
-    const heart = document.getElementById(`heart-${mixId}`);
-    const countSpan = document.getElementById(`like-count-${mixId}`);
-    
-    // AJAX to server
-    fetch('toggle_like.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `mix_id=${mixId}`
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            heart.innerHTML = data.liked ? '❤️' : '🤍';
-            countSpan.innerHTML = data.like_count;
-        } else {
-            alert('Error toggling like: ' + data.error);
-        }
-    })
-    .catch(error => console.error('Like error:', error));
-    }
+    var CSRF_TOKEN = '<?= $_SESSION['csrf_token'] ?>';
         document.querySelectorAll('.soundcloud-embed iframe').forEach(iframe => {
         const widget = SC.Widget(iframe);
         widget.bind(SC.Widget.Events.PLAY, function() {
@@ -635,7 +633,7 @@ $genre_mixes_stmt = $conn->query("SELECT m.title, m.description, m.soundcloud_li
             fetch('increment_listen.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: `mix_id=${mixId}`
+                body: `mix_id=${mixId}&csrf_token=${encodeURIComponent(CSRF_TOKEN)}`
             })
             .then(response => response.json())
             .then(data => {
@@ -660,7 +658,7 @@ $genre_mixes_stmt = $conn->query("SELECT m.title, m.description, m.soundcloud_li
         fetch('toggle_like.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: `mix_id=${mixId}`
+            body: `mix_id=${mixId}&csrf_token=${encodeURIComponent(CSRF_TOKEN)}`
         })
         .then(response => {
             if (!response.ok) throw new Error('Network response was not ok');

@@ -29,11 +29,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             // Verify password (assuming you used password_hash() on registration)
             if (password_verify($password, $user['password'])) {
                 // Success! Set session variables
+                session_regenerate_id(true);
                 $_SESSION['user_id'] = $user['id'];
                 $_SESSION['fname'] = $user['fname'];
                 $_SESSION['lname'] = $user['lname'];
                 $_SESSION['dj_alias'] = $user['dj_alias'] ?: $user['fname'];
                 $_SESSION['email'] = $email;
+                // Refresh CSRF token after login
+                $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 
                 // Redirect to dashboard
                 header("Location: dashboard.php");

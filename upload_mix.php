@@ -11,6 +11,10 @@ if (!isset($_SESSION['user_id'])) {
 $errors = [];
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    // CSRF check
+    if (!hash_equals($_SESSION['csrf_token'] ?? '', $_POST['csrf_token'] ?? '')) {
+        $errors[] = "Invalid CSRF token.";
+    }
     $title = trim($_POST['title']);
     $genre = trim($_POST['genre']);
     $description = trim($_POST['description']);
@@ -28,8 +32,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $errors[] = "Please enter a valid SoundCloud link.";
     }
     if (empty($errors)) {
+        $user_id = (int)$_SESSION['user_id'];
         $stmt = $conn->prepare("INSERT INTO mixes (user_id, title, genre, description, soundcloud_link) VALUES (?, ?, ?, ?, ?)");
-        $stmt->bind_param("issss", $_SESSION['user_id'], $title, $genre, $description, $soundcloud_link);
+        $stmt->bind_param("issss", $user_id, $title, $genre, $description, $soundcloud_link);
 
         if ($stmt->execute()) {
             header("Location: dashboard.php?uploaded=1");

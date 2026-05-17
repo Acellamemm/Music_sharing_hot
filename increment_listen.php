@@ -1,8 +1,20 @@
 <?php
 header('Content-Type: application/json');
+session_start();
 include("connection.php");
 
+if (!isset($_SESSION['user_id'])) {
+    echo json_encode(['success' => false, 'error' => 'Not logged in']);
+    exit();
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mix_id'])) {
+    // CSRF check
+    if (!hash_equals($_SESSION['csrf_token'] ?? '', $_POST['csrf_token'] ?? '')) {
+        echo json_encode(['success' => false, 'error' => 'Invalid CSRF token']);
+        exit();
+    }
+
     $mix_id = (int)$_POST['mix_id'];
 
     $stmt = $conn->prepare("UPDATE mixes SET listens = listens + 1 WHERE id = ?");

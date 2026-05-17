@@ -9,6 +9,11 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mix_id'])) {
+    // CSRF check
+    if (!hash_equals($_SESSION['csrf_token'] ?? '', $_POST['csrf_token'] ?? '')) {
+        echo json_encode(['success' => false, 'error' => 'Invalid CSRF token']);
+        exit();
+    }
     $user_id = $_SESSION['user_id'];
     $mix_id = (int)$_POST['mix_id'];
 
